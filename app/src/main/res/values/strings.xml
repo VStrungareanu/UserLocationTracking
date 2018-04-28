@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">User Location Tracking</string>
-    <string name="title_activity_maps">Map</string>
+    <string name="title_activity_maps">Location Track</string>
+    <string name="title_switch_button">Switch</string>
+    <string name="switch_button_text">State</string>
+    <string name="switch_button_on">On</string>
+    <string name="switch_button_off">Off</string>
 </resources>

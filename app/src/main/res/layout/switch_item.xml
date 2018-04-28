@@ -1,0 +1,11 @@
+<Switch android:id="@+id/location_switch"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_centerHorizontal="true"
+    android:layout_centerVertical="true"
+    android:checked="false"
+    android:text="@string/switch_button_text"
+    android:textOn="@string/switch_button_on"
+    android:textOff="@string/switch_button_off"
+    xmlns:android="http://schemas.android.com/apk/res/android" />
+
