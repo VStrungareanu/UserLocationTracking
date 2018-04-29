@@ -1,22 +1,15 @@
 package com.learning.valentinstrungareanu.userlocationtracking;
 
-import android.Manifest;
 import android.annotation.SuppressLint;
-import android.arch.lifecycle.ViewModelProviders;
-import android.content.pm.PackageManager;
 import android.location.Location;
+import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
-import android.support.v4.app.FragmentActivity;
-import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.Menu;
-import android.view.MenuInflater;
 import android.view.MenuItem;
-import android.view.View;
 import android.widget.CompoundButton;
 import android.widget.Switch;
 import android.widget.Toast;
@@ -25,10 +18,11 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
-import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.LocationSettingsRequest;
+import com.google.android.gms.location.SettingsClient;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
@@ -38,6 +32,8 @@ import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.gms.tasks.OnSuccessListener;
 
+import java.util.ArrayList;
+
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
 public class MapsActivity extends AppCompatActivity implements OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, GoogleMap.OnMyLocationButtonClickListener, GoogleMap.OnMyLocationClickListener {
@@ -46,10 +42,11 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     private GoogleApiClient googleApiClient;
     private FusedLocationProviderClient mFusedLocationClient;
     private LocationRequest mLocationRequest;
-    private LocationListener mLocationListener;
     private LocationCallback mLocationCallback;
-    private Boolean locationOn;
+    private Boolean locationOn = false;
     private Switch locationSwitch;
+    private ArrayList<LatLng> journey = new ArrayList<>();
+    private LatLng latestLocation;
     private PolylineOptions polylineOptions = new PolylineOptions();
     private static final float MIN_DISPLACEMENT = 10;
     private static final int LOCATION_REQUEST_CODE = 101;
@@ -72,18 +69,11 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                 .addOnConnectionFailedListener(this)
                 .build();
 
-        mLocationCallback = new LocationCallback() {
-            @Override
-            public void onLocationResult(LocationResult locationResult) {
-                if (locationResult == null) {
-                    return;
-                }
-                for (Location location : locationResult.getLocations()) {
-                    // Update UI with location data
+        if (savedInstanceState != null){
+            locationOn = savedInstanceState.getBoolean("switchState");
+        }
 
-                }
-            }
-        };
+
     }
 
     public void onStart() {
@@ -107,6 +97,23 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     }
 
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean("switchState", locationOn);
+        Log.d(TAG, "location state: "+locationOn);
+    }
+
+    /**
+     * we use this method to restore the switch button state on config changes
+     * @param menu
+     * @return
+     */
+    @Override
+    public boolean onPrepareOptionsMenu(Menu menu) {
+       locationSwitch.setChecked(locationOn);
+        return true;
+    }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -118,18 +125,23 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         locationSwitch = menu.findItem(R.id.location_switch)
                 .getActionView().findViewById(R.id.location_switch);
+
         locationSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+
                 if (isChecked){
                     Toast.makeText(MapsActivity.this, "ON",Toast.LENGTH_SHORT).show();
                     locationOn = true;
+                    startLocationUpdates();
                 }
                 else {
                     Toast.makeText(MapsActivity.this, "Off",Toast.LENGTH_SHORT).show();
                     locationOn = false;
+                    if (mLocationCallback != null){
+                        stopLocationUpdates();
+                    }
                 }
-
             }
         });
         return true;
@@ -137,11 +149,8 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-
-
         switch (item.getItemId()) {
             case R.id.location_switch:
-
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
@@ -183,60 +192,53 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                         if (location != null) {
 
                             LatLng initialCoordinates = new LatLng(location.getLatitude(), location.getLongitude());
-                            Log.d(TAG, initialCoordinates.toString());
+                            Log.d(TAG, "initial location "+initialCoordinates.toString());
 
-                            polylineOptions.add(new LatLng[]{initialCoordinates});
-                            // Add a marker in user's current location and move the camera
-                            MarkerOptions markerOptions = new MarkerOptions().position(initialCoordinates).title("This is You");
-                            mMap.animateCamera(CameraUpdateFactory.newLatLng(initialCoordinates));
+                            if (locationOn){
+                                journey.add(initialCoordinates);
+                            }
+                            // Move the camera to initial location
+                            mMap.moveCamera(CameraUpdateFactory.newLatLng(initialCoordinates));
                             mMap.animateCamera(CameraUpdateFactory.zoomTo(15));
-                            mMap.addMarker(markerOptions);
+
                             //mMap.setMapType(GoogleMap.MAP_TYPE_SATELLITE);
 
                             //creating the location update request
                             createLocationRequest();
-
-                            //Toast.makeText(MapsActivity.this, initialCoordinates.toString(), Toast.LENGTH_SHORT).show();
-
-                            mLocationListener = new LocationListener() {
-                                @Override
-                                public void onLocationChanged(Location location) {
-
-                                    Toast.makeText(MapsActivity.this, "Moving to: "+location.getLatitude() + "," + location.getLongitude(), Toast.LENGTH_SHORT).show();
-                                    LatLng moveCoordinates = new LatLng(location.getLatitude(), location.getLongitude());
-                                    polylineOptions.add(new LatLng[]{moveCoordinates});
-                                    mMap.addPolyline(polylineOptions);
-                                    mMap.animateCamera(CameraUpdateFactory.newLatLng(new LatLng(location.getLatitude(), location.getLongitude())));
-                                    MarkerOptions markerOptions = new MarkerOptions()
-                                            .position(new LatLng(location.getLatitude(), location.getLongitude())).title("You are Here");
-                                    mMap.addMarker(markerOptions);
-
-                                }
-                            };
+                            Toast.makeText(MapsActivity.this, "location track is "+locationOn.toString(), Toast.LENGTH_SHORT);
 
                             //turn on location update sendouts
-                           // startLocationUpdates();
-                            LocationServices.FusedLocationApi.requestLocationUpdates(googleApiClient, mLocationRequest, mLocationListener);
+                            if (locationOn){startLocationUpdates();}
+                            else if (mLocationCallback != null){
+                                stopLocationUpdates();
+                            }
+
 
                         } else {
                             Toast.makeText(MapsActivity.this, "Please make sure your location service is activated and try again.", Toast.LENGTH_LONG).show();
                         }
                     }
                 });
+    }
 
+    private boolean mapExists(){
+        if (mMap != null) {
+            return true;
+        }
+        return false;
     }
 
 
     //Callback invoked once the GoogleApiClient is connected successfully
     @Override
     public void onConnected(@Nullable Bundle bundle) {
-// Obtain the SupportMapFragment and get notified when the map is ready to be used.
-        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
+        // Obtain the SupportMapFragment and get notified when the map is ready to be used.
+       SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
-    }
 
+    }
 
     @Override
     public void onConnectionSuspended(int i) {
@@ -267,11 +269,11 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         return false;
     }
 
-    @Override
-    public void onPointerCaptureChanged(boolean hasCapture) {
 
-    }
-
+    /**
+     * Method used to create the location request by establishing the granularity of location updates
+     * and accuracy
+     */
     private void createLocationRequest() {
         mLocationRequest = LocationRequest.create();
         mLocationRequest.setInterval(10000);
@@ -284,15 +286,89 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     private void startLocationUpdates() {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) != PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_REQUEST_CODE);
+           ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_REQUEST_CODE);
             return;
         }
-        mFusedLocationClient.requestLocationUpdates(mLocationRequest,
-                mLocationCallback,
-                null /* Looper */);
+            Log.d(TAG, "Sending location updates");
+            // Create the location request to start receiving updates
+            createLocationRequest();
+
+            // Create LocationSettingsRequest object using location request
+            LocationSettingsRequest.Builder builder = new LocationSettingsRequest.Builder();
+            builder.addLocationRequest(mLocationRequest);
+            LocationSettingsRequest locationSettingsRequest = builder.build();
+
+            // Check whether location settings are satisfied
+            // https://developers.google.com/android/reference/com/google/android/gms/location/SettingsClient
+            SettingsClient settingsClient = LocationServices.getSettingsClient(this);
+            settingsClient.checkLocationSettings(locationSettingsRequest);
+
+            //Fetching the last known location using the FusedLocationProviderApi
+             mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+             mLocationCallback = new LocationCallback() {
+                @Override
+                public void onLocationResult(LocationResult locationResult) {
+                    //check if the map object is ready to use
+                    if (mapExists()){
+                        //doing the map updates based on the new location
+                        onChangedLocation(locationResult.getLastLocation());
+                    }
+
+                }
+            };
+            mFusedLocationClient.requestLocationUpdates(mLocationRequest, mLocationCallback,null);
+        }
+
+        private void stopLocationUpdates(){
+            mFusedLocationClient.removeLocationUpdates(mLocationCallback);
+            Log.d(TAG, "Stop location updates");
+            drawUserPath(null, latestLocation, locationOn);
+        }
+
+    /**
+     * Method used to do the map tracking changes when location is detected to be changed
+     * @param location
+     */
+    private void onChangedLocation(Location location){
+
+        Toast.makeText(MapsActivity.this, "Moving to: " + location.getLatitude() + "," + location.getLongitude(), Toast.LENGTH_SHORT).show();
+        LatLng moveCoordinates = new LatLng(location.getLatitude(), location.getLongitude());
+        if (locationOn) {
+            journey.add(moveCoordinates);
+        }
+        latestLocation = journey.get(journey.size()-1);
+        mMap.animateCamera(CameraUpdateFactory.newLatLng(new LatLng(location.getLatitude(), location.getLongitude())));
+        mMap.animateCamera(CameraUpdateFactory.zoomTo(15));
+        drawUserPath(journey, latestLocation, locationOn);
     }
 
-    private void stopLocationUpdates() {
-        mFusedLocationClient.removeLocationUpdates(mLocationCallback);
+    /**
+     * @drawUserPath method is used to trace the journey the user has taken until the location was turned off
+     * @param journey list of all coordinate points recorded since the location was turned on
+     * @param lastLocation last coordinates before the location was turned off
+     * @param locationOn flag that marks the location tracking state
+     */
+    private void drawUserPath(ArrayList<LatLng> journey, LatLng lastLocation, boolean locationOn){
+        MarkerOptions markerOptions = new MarkerOptions();
+        if (locationOn){
+           if (journey != null){
+               for (LatLng moves : journey){
+                   polylineOptions.add(moves);
+               }
+               if (journey.size() > 1) {
+                   markerOptions.position(journey.get(0)).title(getString(R.string.map_marker_start));
+                   mMap.addMarker(markerOptions);
+               }
+           }
+           if (mapExists())
+           {
+               if (polylineOptions != null){mMap.addPolyline(polylineOptions);}
+           }
+       }
+       else{
+            markerOptions.position(latestLocation).title(getString(R.string.map_marker_end));
+            mMap.addMarker(markerOptions);
+       }
+
     }
 }

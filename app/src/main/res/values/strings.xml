@@ -5,4 +5,6 @@
     <string name="switch_button_text">State</string>
     <string name="switch_button_on">On</string>
     <string name="switch_button_off">Off</string>
+    <string name="map_marker_start">You started Here</string>
+    <string name="map_marker_end">You ended Here</string>
 </resources>

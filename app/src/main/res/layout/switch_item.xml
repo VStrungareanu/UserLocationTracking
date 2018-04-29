@@ -3,9 +3,12 @@
     android:layout_height="wrap_content"
     android:layout_centerHorizontal="true"
     android:layout_centerVertical="true"
+    android:showText="true"
     android:checked="false"
     android:text="@string/switch_button_text"
     android:textOn="@string/switch_button_on"
     android:textOff="@string/switch_button_off"
+    android:switchPadding="3dp"
+    android:thumbTextPadding="1dp"
     xmlns:android="http://schemas.android.com/apk/res/android" />
 
