@@ -27,6 +27,7 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.PolylineOptions;
@@ -38,6 +39,9 @@ import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
 public class MapsActivity extends AppCompatActivity implements OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, GoogleMap.OnMyLocationButtonClickListener, GoogleMap.OnMyLocationClickListener {
 
+    private static final float MIN_DISPLACEMENT = 10;
+    private static final int LOCATION_REQUEST_CODE = 101;
+    private static final String TAG = MapsActivity.class.getSimpleName();
     private GoogleMap mMap;
     private GoogleApiClient googleApiClient;
     private FusedLocationProviderClient mFusedLocationClient;
@@ -46,12 +50,9 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     private Boolean locationOn = false;
     private Switch locationSwitch;
     private ArrayList<LatLng> journey = new ArrayList<>();
+    private LatLng initialLocation;
     private LatLng latestLocation;
     private PolylineOptions polylineOptions = new PolylineOptions();
-    private static final float MIN_DISPLACEMENT = 10;
-    private static final int LOCATION_REQUEST_CODE = 101;
-    private static final String TAG = MapsActivity.class.getSimpleName();
-
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,8 +70,10 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                 .addOnConnectionFailedListener(this)
                 .build();
 
-        if (savedInstanceState != null){
+        if (savedInstanceState != null) {
             locationOn = savedInstanceState.getBoolean("switchState");
+            journey = savedInstanceState.getParcelableArrayList("journey");
+
         }
 
 
@@ -101,17 +104,18 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putBoolean("switchState", locationOn);
-        Log.d(TAG, "location state: "+locationOn);
+        outState.putParcelableArrayList("journey", journey);
     }
 
     /**
      * we use this method to restore the switch button state on config changes
+     *
      * @param menu
      * @return
      */
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
-       locationSwitch.setChecked(locationOn);
+        locationSwitch.setChecked(locationOn);
         return true;
     }
 
@@ -130,15 +134,18 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
 
-                if (isChecked){
-                    Toast.makeText(MapsActivity.this, "ON",Toast.LENGTH_SHORT).show();
+                if (isChecked) {
+                    if (mapExists()) {
+                        mMap.clear();
+                    }
+
+                    Toast.makeText(MapsActivity.this, "ON", Toast.LENGTH_SHORT).show();
                     locationOn = true;
                     startLocationUpdates();
-                }
-                else {
-                    Toast.makeText(MapsActivity.this, "Off",Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(MapsActivity.this, "Off", Toast.LENGTH_SHORT).show();
                     locationOn = false;
-                    if (mLocationCallback != null){
+                    if (mLocationCallback != null) {
                         stopLocationUpdates();
                     }
                 }
@@ -172,48 +179,28 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         //check if permission was granted otherwise programatically request it
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) != PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_REQUEST_CODE);
+
             return;
         }
 
         //Fetching the last known location using the FusedLocationProviderApi
         mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
-
-        //enable My location layer, dot and button (listeners on the map)
-        mMap.setMyLocationEnabled(true);
-        mMap.setOnMyLocationButtonClickListener(this);
-        mMap.setOnMyLocationClickListener(this);
-
         mFusedLocationClient.getLastLocation()
                 .addOnSuccessListener(this, new OnSuccessListener<Location>() {
-                    @SuppressLint("MissingPermission")
+
                     @Override
                     public void onSuccess(Location location) {
                         // Got last known location. In some rare situations this can be null.
                         if (location != null) {
-
-                            LatLng initialCoordinates = new LatLng(location.getLatitude(), location.getLongitude());
-                            Log.d(TAG, "initial location "+initialCoordinates.toString());
-
-                            if (locationOn){
-                                journey.add(initialCoordinates);
-                            }
-                            // Move the camera to initial location
-                            mMap.moveCamera(CameraUpdateFactory.newLatLng(initialCoordinates));
-                            mMap.animateCamera(CameraUpdateFactory.zoomTo(15));
-
-                            //mMap.setMapType(GoogleMap.MAP_TYPE_SATELLITE);
-
+                            findInitialLocation(location);
                             //creating the location update request
                             createLocationRequest();
-                            Toast.makeText(MapsActivity.this, "location track is "+locationOn.toString(), Toast.LENGTH_SHORT);
-
                             //turn on location update sendouts
-                            if (locationOn){startLocationUpdates();}
-                            else if (mLocationCallback != null){
+                            if (locationOn) {
+                                startLocationUpdates();
+                            } else if (mLocationCallback != null) {
                                 stopLocationUpdates();
                             }
-
-
                         } else {
                             Toast.makeText(MapsActivity.this, "Please make sure your location service is activated and try again.", Toast.LENGTH_LONG).show();
                         }
@@ -221,19 +208,40 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                 });
     }
 
-    private boolean mapExists(){
+    private boolean mapExists() {
         if (mMap != null) {
             return true;
         }
         return false;
     }
 
+    @SuppressLint("MissingPermission")
+    private void findInitialLocation(Location location) {
+
+        //enable My location layer, dot and button (listeners on the map)
+        mMap.setMyLocationEnabled(true);
+        mMap.setOnMyLocationButtonClickListener(this);
+        mMap.setOnMyLocationClickListener(this);
+
+        LatLng initialCoordinates = new LatLng(location.getLatitude(), location.getLongitude());
+        Log.d(TAG, "initial location " + initialCoordinates.toString());
+
+        if (locationOn) {
+            // journey.add(initialCoordinates);
+        }
+        // Move the camera to initial location
+        mMap.moveCamera(CameraUpdateFactory.newLatLng(initialCoordinates));
+        mMap.animateCamera(CameraUpdateFactory.zoomTo(15));
+
+        //mMap.setMapType(GoogleMap.MAP_TYPE_SATELLITE);
+
+    }
 
     //Callback invoked once the GoogleApiClient is connected successfully
     @Override
     public void onConnected(@Nullable Bundle bundle) {
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
-       SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
+        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
@@ -245,9 +253,29 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     }
 
+    @SuppressLint("MissingPermission")
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (grantResults[0] == PERMISSION_GRANTED) {
+            if (mapExists()) {
+                //Fetching the last known location using the FusedLocationProviderApi
+                mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+                mFusedLocationClient.getLastLocation()
+                        .addOnSuccessListener(this, new OnSuccessListener<Location>() {
+                            @Override
+                            public void onSuccess(Location location) {
+                                // Got last known location. In some rare situations this can be null.
+                                if (location != null) {
+                                    findInitialLocation(location);
+                                } else {
+                                    Toast.makeText(MapsActivity.this, "Please make sure your location service is activated and try again.", Toast.LENGTH_LONG).show();
+                                }
+                            }
+
+                        });
+            }
+        }
     }
 
     //Callback invoked if the GoogleApiClient conection has failed
@@ -283,92 +311,93 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
 
-
     private void startLocationUpdates() {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) != PERMISSION_GRANTED) {
-           ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_REQUEST_CODE);
+            ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_REQUEST_CODE);
             return;
         }
-            Log.d(TAG, "Sending location updates");
-            // Create the location request to start receiving updates
-            createLocationRequest();
+        Log.d(TAG, "Sending location updates");
+        // Create the location request to start receiving updates
+        createLocationRequest();
 
-            // Create LocationSettingsRequest object using location request
-            LocationSettingsRequest.Builder builder = new LocationSettingsRequest.Builder();
-            builder.addLocationRequest(mLocationRequest);
-            LocationSettingsRequest locationSettingsRequest = builder.build();
+        // Create LocationSettingsRequest object using location request
+        LocationSettingsRequest.Builder builder = new LocationSettingsRequest.Builder();
+        builder.addLocationRequest(mLocationRequest);
+        LocationSettingsRequest locationSettingsRequest = builder.build();
 
-            // Check whether location settings are satisfied
-            // https://developers.google.com/android/reference/com/google/android/gms/location/SettingsClient
-            SettingsClient settingsClient = LocationServices.getSettingsClient(this);
-            settingsClient.checkLocationSettings(locationSettingsRequest);
+        // Check whether location settings are satisfied
+        // https://developers.google.com/android/reference/com/google/android/gms/location/SettingsClient
+        SettingsClient settingsClient = LocationServices.getSettingsClient(this);
+        settingsClient.checkLocationSettings(locationSettingsRequest);
 
-            //Fetching the last known location using the FusedLocationProviderApi
-             mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
-             mLocationCallback = new LocationCallback() {
-                @Override
-                public void onLocationResult(LocationResult locationResult) {
-                    //check if the map object is ready to use
-                    if (mapExists()){
-                        //doing the map updates based on the new location
-                        onChangedLocation(locationResult.getLastLocation());
-                    }
-
+        //Fetching the last known location using the FusedLocationProviderApi
+        mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        mLocationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult locationResult) {
+                //check if the map object is ready to use
+                if (mapExists()) {
+                    //doing the map updates based on the new location
+                    onChangedLocation(locationResult.getLastLocation());
                 }
-            };
-            mFusedLocationClient.requestLocationUpdates(mLocationRequest, mLocationCallback,null);
-        }
 
-        private void stopLocationUpdates(){
-            mFusedLocationClient.removeLocationUpdates(mLocationCallback);
-            Log.d(TAG, "Stop location updates");
-            drawUserPath(null, latestLocation, locationOn);
-        }
+            }
+        };
+        mFusedLocationClient.requestLocationUpdates(mLocationRequest, mLocationCallback, null);
+
+    }
+
+    private void stopLocationUpdates() {
+        mFusedLocationClient.removeLocationUpdates(mLocationCallback);
+        Log.d(TAG, "Stop location updates");
+        drawUserPath(null, latestLocation, locationOn);
+    }
 
     /**
      * Method used to do the map tracking changes when location is detected to be changed
+     *
      * @param location
      */
-    private void onChangedLocation(Location location){
+    private void onChangedLocation(Location location) {
 
         Toast.makeText(MapsActivity.this, "Moving to: " + location.getLatitude() + "," + location.getLongitude(), Toast.LENGTH_SHORT).show();
         LatLng moveCoordinates = new LatLng(location.getLatitude(), location.getLongitude());
         if (locationOn) {
             journey.add(moveCoordinates);
         }
-        latestLocation = journey.get(journey.size()-1);
+        latestLocation = journey.get(journey.size() - 1);
         mMap.animateCamera(CameraUpdateFactory.newLatLng(new LatLng(location.getLatitude(), location.getLongitude())));
         mMap.animateCamera(CameraUpdateFactory.zoomTo(15));
+
         drawUserPath(journey, latestLocation, locationOn);
     }
 
     /**
+     * @param journey        list of all coordinate points recorded since the location was turned on
+     * @param latestLocation last coordinates before the location was turned off
+     * @param locationOn     flag that marks the location tracking state
      * @drawUserPath method is used to trace the journey the user has taken until the location was turned off
-     * @param journey list of all coordinate points recorded since the location was turned on
-     * @param lastLocation last coordinates before the location was turned off
-     * @param locationOn flag that marks the location tracking state
      */
-    private void drawUserPath(ArrayList<LatLng> journey, LatLng lastLocation, boolean locationOn){
+    private void drawUserPath(ArrayList<LatLng> journey, LatLng latestLocation, boolean locationOn) {
         MarkerOptions markerOptions = new MarkerOptions();
-        if (locationOn){
-           if (journey != null){
-               for (LatLng moves : journey){
-                   polylineOptions.add(moves);
-               }
-               if (journey.size() > 1) {
-                   markerOptions.position(journey.get(0)).title(getString(R.string.map_marker_start));
-                   mMap.addMarker(markerOptions);
-               }
-           }
-           if (mapExists())
-           {
-               if (polylineOptions != null){mMap.addPolyline(polylineOptions);}
-           }
-       }
-       else{
+        if (locationOn) {
+            if (journey != null) {
+                polylineOptions.addAll(journey);
+                if (polylineOptions != null) {
+                    mMap.addPolyline(polylineOptions);
+                }
+
+                if (journey.size() > 1) {
+                    markerOptions.position(journey.get(0)).title(getString(R.string.map_marker_start));
+                    markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_CYAN));
+                    mMap.addMarker(markerOptions);
+                }
+            }
+        } else {
             markerOptions.position(latestLocation).title(getString(R.string.map_marker_end));
+            markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED));
             mMap.addMarker(markerOptions);
-       }
+        }
 
     }
 }
